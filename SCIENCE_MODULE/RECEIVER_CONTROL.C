@@ -124,12 +124,17 @@ int main(void) {
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
 	while (1) {
-		//HAL_CAN_AddTxMessage(&hcan, &TxMessage, txData, &usedmailbox);//send data
-		//HAL_Delay(500);
-
+		//******** DEBUG CAN PROTOCOL ***********
+		/*
+		 HAL_CAN_AddTxMessage(&hcan, &TxMessage, txData, &usedmailbox); //send data
+		 HAL_Delay(500);
+		 */
+		// ********* END DEBUG CAN PROTOCOL ************************
+         // /*
 		if (HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0))//checks if the number of messages in FIFO 0 is non zero
 				{
 			HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &RxMessage, rxData);//stores the data frame in RxMessage struct, stores data in rsData array
+
 			int sm = rxData[0];
 			switch (sm) {
 			case 0: // **** Master shutdown***** kill all the processes which are running
@@ -230,6 +235,7 @@ int main(void) {
 			}
 
 		}
+		// */
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */

@@ -70,7 +70,7 @@ CAN_FilterTypeDef sFilterConfig;			//struct containing filter settings
 CAN_RxHeaderTypeDef RxMessage;	 //struct for recieved data frame
 CAN_TxHeaderTypeDef TxMessage;   // struct for transmitted dataframe
 uint8_t rxData[8] = { 0, 0, 0, 0, 0, 0, 0, 0 }; //array for recieved data (8 bytes)
-uint8_t txData[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+uint8_t txData[8] = { 10, 0, 0, 0, 0, 0, 0, 0 };
 uint32_t usedmailbox;
 int flag = 0;
 /* USER CODE END PFP */
@@ -146,7 +146,24 @@ int main(void) {
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
 	while (1) {
-		char mode=getuval(); // decide which mode to operate
+
+		//   *******DEBUG CAN PROTOCOL*****
+		/*	if (HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0))//checks if the number of messages in FIFO 0 is non zero
+		 {
+		 HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &RxMessage, rxData);//stores the data frame in RxMessage struct, stores data in rsData array
+		 }
+		 if (rxData[0] == 10)
+		 {
+		 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);		//LED ON
+		 HAL_Delay(500);
+		 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);	//LED OFF
+		 HAL_Delay(500);
+		 rxData[0] = 0;							//reset data
+		 }
+
+		 }     ******* END DEBUG CAN PROTOCOL***********/
+         // /*
+		char mode = getuval(); // decide which mode to operate
 		// **** DONT SWITCH MODES WHILE THE ROVER IS IN THE MIDDLE OF ANOTHER MODE *****
 		if (mode == 's') {  // Science mode
 			char sm = getuval();
@@ -209,20 +226,20 @@ int main(void) {
 			HAL_CAN_AddTxMessage(&hcan, &TxMessage, txData, &usedmailbox); //send data
 		}
 
-		else if(mode=='m')  // Motor mode
-		{
-				gear = (int) ((getuval() - '0') + 1);   //Get gear value
-				if (getuval() == 's') {
-					x = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
-							+ (getuval() - '0') * 100 + (getuval() - '0') * 10
-							+ (getuval() - '0');   //x value
-				}
-				if (getuval() == 'f') {
-					y = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
-							+ (getuval() - '0') * 100 + (getuval() - '0') * 10
-							+ (getuval() - '0');   //y value
-				}
-				trash = getuval(); //This is actually Mast CAM values but we're ignoring it for now
+		else if (mode == 'm')  // Motor mode
+				{
+			gear = (int) ((getuval() - '0') + 1);   //Get gear value
+			if (getuval() == 's') {
+				x = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
+						+ (getuval() - '0') * 100 + (getuval() - '0') * 10
+						+ (getuval() - '0');   //x value
+			}
+			if (getuval() == 'f') {
+				y = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
+						+ (getuval() - '0') * 100 + (getuval() - '0') * 10
+						+ (getuval() - '0');   //y value
+			}
+			trash = getuval(); //This is actually Mast CAM values but we're ignoring it for now
 
 			x = x - 8000;
 			y = y - 8000;
@@ -234,18 +251,16 @@ int main(void) {
 
 			MotorCode(x, y, gear);  //Run MotorCode
 
-	}
-	else
-	{
-					trash = trash + 1 - 1;   //Random values
-				}
-
+		} else {
+			trash = trash + 1 - 1;   //Random values
+		}
 
 		// HAL_Delay(500);
 		//printf("CAN msg sent\n");
+		// */
 		/* USER CODE END WHILE */
 	}
-		/* USER CODE BEGIN 3 */
+	/* USER CODE BEGIN 3 */
 
 	/* USER CODE END 3 */
 }

@@ -463,9 +463,9 @@ int main() {
 									+ (getuval() - '0'); //x2 value
 							link2 = Adjust(link2);
 							if (link2 < 0)
-								GPIOB->BRR |= 1 << (3);
+								GPIOB->BSRR = 1 << 3;
 							else
-								GPIOB->ODR |= 1 << 3;
+								GPIOB->BSRR = 1 << (3 + 16);
 
 							move_link2(abs(link2))
 						}

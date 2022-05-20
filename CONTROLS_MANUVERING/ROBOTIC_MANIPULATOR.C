@@ -3,9 +3,18 @@
 #include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
-
+void MotorCode(int x, int y, float gear);
+void GPIO_Initialize(void);
+void Timer_Initialize(void);
+void UART_Initilaize(void);
+uint8_t getuval(void);
+volatile static int count = 0;
+int flag = 0;
+volatile int x = 0, y = 0;
+void SysTick_Handler(void) {
+	count++;
+}
 uint16_t pwm = 5500;
-
 //MACROS
 #define stop_swivel TIM2->CCR1 = 0;
 #define move_swivel TIM2->CCR1 = pwm;
@@ -22,20 +31,18 @@ uint16_t pwm = 5500;
 #define stop_gripper TIM3->CCR3 = 0;
 #define move_gripper TIM3->CCR3 = pwm;
 
-volatile static int my_ticks = 0;
-int flag = 0;
-void SysTick_Handler(void) {
-	my_ticks++;
-}
-
-
 void GPIO_Initialize() {
-	//Enable Clocks:
-	RCC->APB2ENR |= RCC_APB2ENR_IOPAEN; //Enable Clock for Port A
-	RCC->APB2ENR |= RCC_APB2ENR_IOPBEN; //Enable Clock for Port B
-	RCC->APB2ENR |= RCC_APB2ENR_AFIOEN; //Enable Alternate Function
 
-	//MOTOR
+	// CONFIGURE PORT C PIN 13 -> ONBOARD LED
+	RCC->APB2ENR |= RCC_APB2ENR_IOPCEN;
+	GPIOC->CRH |= GPIO_CRH_MODE13;
+	GPIOC->CRH &= ~(GPIO_CRH_CNF13);
+
+	//Enable Clocks:
+	RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;   //Enable Clock for Port A
+	RCC->APB2ENR |= RCC_APB2ENR_IOPBEN;   //Enable Clock for Port B
+	RCC->APB2ENR |= RCC_APB2ENR_AFIOEN;   //Enable Alternate Function
+
 	//Setup PA4:
 	GPIOA->CRL |= GPIO_CRL_MODE4;   //OUTPUT Mode 50Mhz
 	GPIOA->CRL &= ~(GPIO_CRL_CNF4);   //Output Push-Pull
@@ -56,11 +63,6 @@ void GPIO_Initialize() {
 	GPIOB->CRL |= GPIO_CRL_CNF7_1;
 	GPIOB->CRL &= ~(GPIO_CRL_CNF7_0);
 
-	//PA10 Setup: (UART Rx)
-	GPIOA->CRH &= ~(GPIO_CRH_MODE10);   //INPUT Mode (00)
-	GPIOA->CRH |= GPIO_CRH_CNF10;   //Input with pull-up/pull-down (10)
-	GPIOA->CRH &= ~(GPIO_CRH_CNF10_0);
-
 	//PB4 Setup:
 	//Disable SWD & JTAG:
 	AFIO->MAPR |= AFIO_MAPR_SWJ_CFG_2;
@@ -69,7 +71,6 @@ void GPIO_Initialize() {
 	GPIOB->CRL &= ~(GPIO_CRL_CNF4);   //Output Push-Pull (00)
 	GPIOB->BRR = 1 << (4);   //Mandatory turn off
 
-	//1)
 	//PB3 Setup: (DIR)
 	GPIOB->CRL |= GPIO_CRL_MODE3;	//OUTPUT Mode (11)
 	GPIOB->CRL &= ~(GPIO_CRL_CNF3); //Output Push-Pull (00)
@@ -136,7 +137,6 @@ void GPIO_Initialize() {
 	GPIOB->CRL |= GPIO_CRL_CNF1_1; //AF Output Push-Pull (10)
 	GPIOB->CRL &= ~(GPIO_CRL_CNF1_0);
 
-	//7)
 	//PB11 Setup: (DIR)
 	GPIOB->CRH |= GPIO_CRH_MODE11;	 //OUTPUT Mode (11)
 	GPIOB->CRH &= ~(GPIO_CRH_CNF11); //Output Push-Pull (00)
@@ -148,7 +148,6 @@ void GPIO_Initialize() {
 }
 
 void Timer_Initialize() {
-	//MOTOR
 	RCC->APB1ENR |= RCC_APB1ENR_TIM4EN;   //Enable Timer4
 	TIM4->CCER |= TIM_CCER_CC1E | TIM_CCER_CC2E; //Enable Channel 1 and 2 as OUTPUT
 	TIM4->CR1 |= TIM_CR1_ARPE;   //Enable Auto Re-Load Preload (ARPE)
@@ -171,7 +170,6 @@ void Timer_Initialize() {
 	TIM4->EGR |= TIM_EGR_UG;   //Update Registers
 	TIM4->CR1 |= TIM_CR1_CEN;   //Start Counting
 
-	//Timer 2: PA0
 	//TIMER 2 SETUP:
 	RCC->APB1ENR |= RCC_APB1ENR_TIM2EN; //Timer 2 Enable
 	TIM2->CCER |= TIM_CCER_CC1E | TIM_CCER_CC2E | TIM_CCER_CC3E | TIM_CCER_CC4E; //Enable Channel 1,2,3,4 as OUTPUT
@@ -237,86 +235,161 @@ void Timer_Initialize() {
 	TIM3->CR1 |= TIM_CR1_CEN;   //Start Counting
 }
 
-void Drive(int DL, int DR, int a, int b, int p, int q, int X, int Y, float gear) {
-	if (DL == 1)
-		GPIOA->BSRR |= 1 << 4;   //Turn on LEFT LED
-	else
-		GPIOA->BRR |= 1 << 4;   //Turn off LEFT LED
-
-	if (DR == 1)
-		GPIOA->BSRR |= 1 << 5;   //Turn on RIGHT LED
-	else
-		GPIOA->BRR |= 1 << 5;   //Turn off RIGHT LED
-
-	TIM4->CCR1 = (uint32_t) abs(abs(a * X) - abs(b * Y)) * (gear * 0.1); //Left PWM
-	TIM4->CCR2 = (uint32_t) abs(abs(p * X) - abs(q * Y)) * (gear * 0.1); //Right PWM
-}
-
-void MotorCode(int x, int y, float g) {
-//void Drive(int DL, int DR, int a, int b, int p, int q, int X, int Y, int g)
-
-	if (abs(x) < 20 && abs(y) < 20)   //No Motion
-		Drive(0, 0, 0, 0, 0, 0, 0, 0, 0);
-
-	else if (abs(x) < 10 && y < 0)   //Full Backward
-		Drive(0, 0, 0, 1, 0, 1, x, y, g);
-
-	else if (abs(x) < 10 && y > 0)   //Full Forward
-		Drive(1, 1, 0, 1, 0, 1, x, y, g);
-
-	else if (x < 0 && abs(y) <= 10)   //Spot Turn Left
-		Drive(0, 1, 1, 0, 1, 0, x, y, g);
-
-	else if (x > 0 && abs(y) <= 10)   //Spot Turn Right
-		Drive(1, 0, 1, 0, 1, 0, x, y, g);
-
-	else if (x > 0 && y > 0 && x > y)   //Octet 1
-		Drive(1, 0, 1, 0, 1, 1, x, y, g);
-
-	else if (x > 0 && y > 0 && x < y)   //Octet 2
-		Drive(1, 1, 0, 1, 1, 1, x, y, g);
-
-	else if (x < 0 && y > 0 && abs(x) < y)   //Octet 3
-		Drive(1, 1, 1, 1, 0, 1, x, y, g);
-
-	else if (x < 0 && y > 0 && abs(x) >= y)   //Octet 4
-		Drive(0, 1, 1, 1, 1, 0, x, y, g);
-
-	else if (x < 0 && y < 0 && abs(x) > abs(y))   //Octet 5
-		Drive(0, 1, 1, 0, 1, 1, x, y, g);
-
-	else if (x < 0 && y < 0 && abs(x) < abs(y))   //Octet 6
-		Drive(0, 0, 0, 1, 1, 1, x, y, g);
-
-	else if (x > 0 && y < 0 && abs(x) < abs(y))   //Octet 7
-		Drive(0, 0, 1, 1, 0, 1, x, y, g);
-
-	else if (x > 0 && y < 0 && abs(x) > abs(y))   //Octet 8
-		Drive(1, 0, 1, 1, 1, 0, x, y, g);
-
-	//Test Drive:
-	//Drive(1,1,1,0,0,1,x,y,g);
-}
 void UART_Initilaize() {
-	//PA9(Tx) PA10(Rx)
-	RCC->APB2ENR |= RCC_APB2ENR_USART1EN; //UART1 Enable, Clk freq = 8Mhz
-	//Setting up Baud Rate:
-	USART1->BRR |= 4 << 4 | 5 << 0; //Gives 115200 Baud Rate(approx.) Register Value = (8MHz)/(16 * Reqd. Baud Rate) = 4.5
-	//              Rx Enable      Tx Enable  UART Enable
-	USART1->CR1 |= (USART_CR1_RE | USART_CR1_TE | USART_CR1_UE);
+	/*
+	 //PA9(Tx) PA10(Rx)
+	 RCC->APB2ENR |= RCC_APB2ENR_USART1EN;   //UART1 Enable, Clk freq = 8Mhz
+	 //Setting up Baud Rate:
+	 USART1->BRR |= 4<<4 | 5<<0;   //Gives 115200 Baud Rate(approx.) Register Value = (8MHz)/(16 * Reqd. Baud Rate) = 4.5
+	 //              Rx Enable      Tx Enable	  UART Enable
+	 USART1->CR1 |= (USART_CR1_RE | USART_CR1_TE | USART_CR1_UE);
+	 */
+
+	// CONFIGURE UART | TX -> A9 | RX -> A10
+	RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
+
+	// RX - A10 | FLOATING INPUT
+	GPIOA->CRH &= ~(GPIO_CRH_MODE10 | GPIO_CRH_CNF10_1);
+	GPIOA->CRH |= GPIO_CRH_CNF10_0;
+
+	// TX - A9 | ALTERNATE OUTPUT PUSH-PULL
+	GPIOA->CRH &= ~GPIO_CRH_CNF9_0;
+	GPIOA->CRH |= GPIO_CRH_CNF9_1 | GPIO_CRH_MODE9_1;
+
+	// BAUD RATE
+	USART1->BRR |= 0x45; // 115200
+
+	// CONTROL REGISTER | USART ENABLE | TRANSMIT ENABLE | RECEIVE ENABLE
+	USART1->CR1 |= USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
+
 }
 
+void MotorCode(int x, int y, float gear) {
+// STOP
+	if (abs(x) < 20 && abs(y) < 20) {
+		GPIOA->BRR |= 1 << 4;
+		GPIOA->BRR |= 1 << 5;
+		TIM4->CCR1 = 0;  //Left SPEED
+		TIM4->CCR2 = 0;   //Right SPEED
+	}
+
+	// FORWARD MAX
+	else if (abs(x) < 10 && y > 0) {
+		GPIOA->BSRR |= 1 << 4;
+		GPIOA->BSRR |= 1 << 5;
+		TIM4->CCR1 = ((uint32_t) abs(y) * (gear * 0.1));  //Left SPEED
+		TIM4->CCR2 = ((uint32_t) abs(y) * (gear * 0.1));   //Right SPEED
+
+	}
+
+	// BACKWARD MAX
+	else if (abs(x) < 10 && y < 0) {
+		GPIOA->BRR |= 1 << 4;
+		GPIOA->BRR |= 1 << 5;
+		TIM4->CCR1 = (uint32_t) (abs(y) * (gear * 0.1));  //Left SPEED
+		TIM4->CCR2 = (uint32_t) (abs(y) * (gear * 0.1));   //Right SPEED
+	}
+
+	// SPOT LEFT
+	else if (x < 0 && abs(y) <= 10) {
+		GPIOA->BRR |= 1 << 4;
+		GPIOA->BSRR |= 1 << 5;
+		TIM4->CCR1 = (uint32_t) (abs(x) * (gear * 0.1));  //Left SPEED
+		TIM4->CCR2 = (uint32_t) (abs(x) * (gear * 0.1));   //Right SPEED
+	}
+
+	// SPOT RIGHT
+	else if (x > 0 && abs(y) <= 10) {
+		GPIOA->BSRR |= 1 << 4;
+		GPIOA->BRR |= 1 << 5;
+		TIM4->CCR1 = (uint32_t) (abs(x) * (gear * 0.1));		//Left SPEED
+		TIM4->CCR2 = (uint32_t) (abs(x) * (gear * 0.1));   //Right SPEED
+	}
+
+	// OCTET 1
+	else if (x > 0 && y > 0 && x > y) {
+		GPIOA->BSRR |= 1 << 4;
+		GPIOA->BRR |= 1 << 5;
+		TIM4->CCR1 = (uint32_t) (abs(x) * (gear * 0.1));   //Left SPEED
+		TIM4->CCR2 = (uint32_t) (abs(abs(x) - abs(y)) * (gear * 0.1)); //Right SPEED
+	}
+
+	// OCTET 2
+	else if (x > 0 && y > 0 && x < y) {
+		GPIOA->BSRR |= 1 << 4;
+		GPIOA->BSRR |= 1 << 5;
+		TIM4->CCR1 = (uint32_t) (abs(y) * (gear * 0.1));   //Left SPEED
+		TIM4->CCR2 = (uint32_t) (abs(abs(x) - abs(y)) * (gear * 0.1)); //Right SPEED
+	}
+
+	// OCTET 3
+	else if (x < 0 && y > 0 && abs(x) < y) {
+		GPIOA->BSRR |= 1 << 4;
+		GPIOA->BSRR |= 1 << 5;
+		TIM4->CCR1 = (uint32_t) (abs(abs(x) - abs(y)) * (gear * 0.1)); //Left SPEED
+		TIM4->CCR2 = (uint32_t) (abs(y) * (gear * 0.1));   //Right SPEED
+	}
+
+	// OCTET 4
+	else if (x < 0 && y > 0 && abs(x) >= y) {
+		GPIOA->BRR |= 1 << 4;
+		GPIOA->BSRR |= 1 << 5;
+		TIM4->CCR1 = (uint32_t) (abs(abs(x) - abs(y)) * (gear * 0.1)); //Left SPEED
+		TIM4->CCR2 = (uint32_t) (abs(x) * (gear * 0.1));   //Right SPEED
+	}
+
+	// OCTET 5
+	else if (x < 0 && y < 0 && abs(x) > abs(y)) {
+		GPIOA->BRR |= 1 << 4;
+		GPIOA->BSRR |= 1 << 5;
+		TIM4->CCR1 = (uint32_t) (abs(x) * (gear * 0.1));   //Left SPEED
+		TIM4->CCR2 = (uint32_t) (abs(abs(x) - abs(y)) * (gear * 0.1)); //Right SPEED
+	}
+
+	// OCTET 6
+	else if (x < 0 && y < 0 && abs(x) < abs(y)) {
+		GPIOA->BRR |= 1 << 4;
+		GPIOA->BRR |= 1 << 5;
+		TIM4->CCR1 = (uint32_t) (abs(y) * (gear * 0.1));   //Left SPEED
+		TIM4->CCR2 = (uint32_t) (abs(abs(x) - abs(y)) * (gear * 0.1)); //Right SPEED
+	}
+
+	// OCTET 7
+	else if (x > 0 && y < 0 && abs(x) < abs(y)) {
+		GPIOA->BRR |= 1 << 4;
+		GPIOA->BRR |= 1 << 5;
+		TIM4->CCR1 = (uint32_t) (abs(abs(x) - abs(y)) * (gear * 0.1)); //Left SPEED
+		TIM4->CCR2 = (uint32_t) (abs(y) * (gear * 0.1));   //Right SPEED
+	}
+
+	// OCTET 8
+	else if (x > 0 && y < 0 && abs(x) > abs(y)) {
+		GPIOA->BSRR |= 1 << 4;
+		GPIOA->BRR |= 1 << 5;
+		TIM4->CCR1 = (uint32_t) (abs(abs(x) - abs(y)) * (gear * 0.1)); //Left SPEED
+		TIM4->CCR2 = (uint32_t) (abs(x) * (gear * 0.1));   //Right SPEED
+	}
+}
 uint8_t getuval()   //Reads UART Values
 {
 	uint8_t data;
-	my_ticks = 0;
+	count = 0;
 	if (flag == 1) {
+
 		return 0;
 	}
-	while (my_ticks < 1000 && !(USART1->SR & USART_SR_RXNE)) {
+	while (count < 800 && !(USART1->SR & USART_SR_RXNE)) {
 	}
-	if (my_ticks >= 1000) {
+	if (count >= 800) {
 		flag = 1;
+		x = 8000;
+		y = 8000;
+		stop_swivel
+		stop_roll
+		stop_pitch
+		stop_gripper
+		move_link1(0)
+		move_link2(0)
 		return 0;
 	} else {
 		flag = 0;
@@ -335,244 +408,121 @@ int main() {
 	GPIO_Initialize();
 	Timer_Initialize();
 	UART_Initilaize();
+	SysTick_Config(SystemCoreClock / 1000);
 	uint8_t mode = 0;
-	int x = 0, y = 0;
+
 	float gear = 1.0;
 	int swivel = 0, link1 = 0;
 	int link2 = 0, roll = 0;
-	int gripper = 0, pitch = 0;
+    int gripper = 0, pitch = 0;
 	int trash = 0;
-	//float gear = 1.0;
 	while (1) {
+
 		//Read LAN2UART Values
 		flag = 0;
+
 		mode = getuval();
 		if (mode == 'a') {
+			x=8000;
+			y=8000;
 			if (getuval() == 's')		//SWIVEL
-					{
-				swivel = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
-						+ (getuval() - '0') * 100 + (getuval() - '0') * 10
-						+ (getuval() - '0'); //x1 value
-				if (swivel == 0)
-					stop_swivel
+								{
+							swivel = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
+									+ (getuval() - '0') * 100 + (getuval() - '0') * 10
+									+ (getuval() - '0'); //x1 value
+							if (swivel == 0)
+								stop_swivel
 
-				else if (swivel == 16000) {
-					if (flag == 1) {
-													stop_roll
-													stop_pitch
-													stop_gripper
-													stop_swivel
-													move_link1(0)
-													move_link2(0)
-													flag=0;
-												}
-					else{
-					GPIOB->BSRR = 1 << 5;
-					move_swivel
-					}
-				}
+							else if (swivel == 16000) {
+								GPIOB->BSRR = 1 << 5;
+								move_swivel
+							}
 
+							else if (swivel == 16001) {
+								GPIOB->BSRR = 1 << (5 + 16);
+								move_swivel
+							}
+						}
+						if (getuval() == 'o')		//LINK1
+								{
+							link1 = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
+									+ (getuval() - '0') * 100 + (getuval() - '0') * 10
+									+ (getuval() - '0'); //y1 value
 
-				else if (swivel == 16001) {
-					GPIOB->BSRR = 1 << (5 + 16);
-					if (flag == 1) {
-													stop_roll
-													stop_pitch
-													stop_gripper
-													stop_swivel
-													move_link1(0)
-													move_link2(0)
-													flag=0;
-												}
-					else
-					{
-					move_swivel
-				}
-				}
+							link1 = Adjust(link1);
+							if (link1 < 0)
+								GPIOB->BSRR = 1 << 4;
+							else
+								GPIOB->BSRR = 1 << (4 + 16);
+							move_link1(abs(link1))
+						}
+						if (getuval() == 't')		//LINK2
+								{
+							link2 = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
+									+ (getuval() - '0') * 100 + (getuval() - '0') * 10
+									+ (getuval() - '0'); //x2 value
+							link2 = Adjust(link2);
+							if (link2 < 0)
+								GPIOB->BRR |= 1 << (3);
+							else
+								GPIOB->ODR |= 1 << 3;
 
-			}
+							move_link2(abs(link2))
+						}
+						if (getuval() == 'r')		//ROLL
+								{
+							roll = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
+									+ (getuval() - '0') * 100 + (getuval() - '0') * 10
+									+ (getuval() - '0'); //y2 value
+							if (roll == 0)
+								stop_roll
 
-			if (getuval() == 'o')		//LINK1
-					{
-				link1 = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
-						+ (getuval() - '0') * 100 + (getuval() - '0') * 10
-						+ (getuval() - '0'); //y1 value
+							else if (roll == 16000) {
+								GPIOA->BSRR = 1 << (15 + 16);
+								move_roll
+							}
 
-				link1 = Adjust(link1);
-				if (link1 < 0)
-					GPIOB->BSRR = 1 << 4;
-				else
-					GPIOB->BSRR = 1 << (4 + 16);
-				if (flag == 1) {
-												stop_roll
-												stop_pitch
-												stop_gripper
-												stop_swivel
-												move_link1(0)
-												move_link2(0)
-												flag=0;
-											}
-				else
-				{
-				move_link1(abs(link1))
-				}
-			}
+							else if (roll == 16001) {
+								GPIOA->BSRR = 1 << 15;
+								move_roll
+							}
+						}
+						if (getuval() == 'p')		//PITCH
+								{
+							pitch = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
+									+ (getuval() - '0') * 100 + (getuval() - '0') * 10
+									+ (getuval() - '0'); //Left Trigger
 
-			if (getuval() == 't')		//LINK2
-					{
-				link2 = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
-						+ (getuval() - '0') * 100 + (getuval() - '0') * 10
-						+ (getuval() - '0'); //x2 value
-				link2 = Adjust(link2);
-				if (link2 < 0)
-					GPIOB->BRR |= 1 << (3);
-				else
-					GPIOB->ODR |= 1 << 3;
-				if (flag == 1) {
-												stop_roll
-												stop_pitch
-												stop_gripper
-												stop_swivel
-												move_link1(0)
-												move_link2(0)
-												flag=0;
-											}
-				else
-				{
-				move_link2(abs(link2))
-			}
-					}
+							if (pitch == 0)
+								stop_pitch
 
-			if (getuval() == 'r')		//ROLL
-					{
-				roll = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
-						+ (getuval() - '0') * 100 + (getuval() - '0') * 10
-						+ (getuval() - '0'); //y2 value
-				if (roll == 0)
-					stop_roll
+							else if (pitch == 16000) {
+								GPIOB->BSRR = 1 << (10 + 16);
+								move_pitch
+							} else if (pitch == 16001) {
+								GPIOB->BSRR = 1 << 10;
+								move_pitch
+							}
+						}
+						if (getuval() == 'g')		//GRIPPER
+								{
+							gripper = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
+									+ (getuval() - '0') * 100 + (getuval() - '0') * 10
+									+ (getuval() - '0'); //Right Trigger
+							if (gripper == 0)
+								stop_gripper
 
-				else if (roll == 16000) {
-					GPIOA->BSRR = 1 << (15 + 16);
-					if (flag == 1) {
-													stop_roll
-													stop_pitch
-													stop_gripper
-													stop_swivel
-													move_link1(0)
-													move_link2(0)
-													flag=0;
-												}
-					else
-					{
-					move_roll
-					}
-				}
+							else if (gripper == 16000) {
+								GPIOB->BSRR = 1 << (11 + 16);
+								move_gripper
+							} else if (gripper == 16001) {
+								GPIOB->BSRR = 1 << 11;
+								move_gripper
+							}
 
-				else if (roll == 16001) {
-					GPIOA->BSRR = 1 << 15;
-					if (flag == 1) {
-													stop_roll
-													stop_pitch
-													stop_gripper
-													stop_swivel
-													move_link1(0)
-													move_link2(0)
-													flag=0;
-												}
-					else
-					{
-					move_roll
-					}
-				}
-			}
-
-			if (getuval() == 'p')		//PITCH
-					{
-				pitch = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
-						+ (getuval() - '0') * 100 + (getuval() - '0') * 10
-						+ (getuval() - '0'); //Left Trigger
-
-				if (pitch == 0)
-					stop_pitch
-
-				else if (pitch == 16000) {
-					if (flag == 1) {
-													stop_roll
-													stop_pitch
-													stop_gripper
-													stop_swivel
-													move_link1(0)
-													move_link2(0)
-													flag=0;
-												}
-					else
-					{
-					GPIOB->BSRR = 1 << (10 + 16);
-					move_pitch
-					}
-				} else if (pitch == 16001) {
-					if (flag == 1) {
-													stop_roll
-													stop_pitch
-													stop_gripper
-													stop_swivel
-													move_link1(0)
-													move_link2(0)
-													flag=0;
-												}
-					else
-					{
-					GPIOB->BSRR = 1 << 10;
-					move_pitch
-					}
-				}
-			}
-
-			if (getuval() == 'g')		//GRIPPER
-					{
-				gripper = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
-						+ (getuval() - '0') * 100 + (getuval() - '0') * 10
-						+ (getuval() - '0'); //Right Trigger
-				if (gripper == 0)
-					stop_gripper
-
-				else if (gripper == 16000) {
-					if (flag == 1) {
-													stop_roll
-													stop_pitch
-													stop_gripper
-													stop_swivel
-													move_link1(0)
-													move_link2(0)
-                                                    flag=0;
-												}
-					else
-					{
-					GPIOB->BSRR = 1 << (11 + 16);
-					move_gripper
-					}
-				} else if (gripper == 16001) {
-					if (flag == 1) {
-													stop_roll
-													stop_pitch
-													stop_gripper
-													stop_swivel
-													move_link1(0)
-													move_link2(0)
-													flag=0;
-												}
-					else
-					{
-					GPIOB->BSRR = 1 << 11;
-					move_gripper
-					}
-				}
-			}
-
-
-			//ALLEN HEAD TBD
-		} else if (mode == 'm') {
-			gear = (int) ((getuval() - '0') + 1);   //Get gear value
+		}
+		}else if (mode == 'm') {
+			gear = (int) ((getuval() - '0') + 1);    //Get gear value
 			if (getuval() == 's') {
 				x = (getuval() - '0') * 10000 + (getuval() - '0') * 1000
 						+ (getuval() - '0') * 100 + (getuval() - '0') * 10
@@ -584,25 +534,21 @@ int main() {
 						+ (getuval() - '0');   //y value
 			}
 			trash = getuval(); //This is actually Mast CAM values but we're ignoring it for now
-			x = x - 8000;
-			y = y - 8000;
-			if (flag == 1) {
-				x = 8000;
-				y = 8000;
-			}
-			if (abs(x) < 500)
-				x = 0;
-			if (abs(y) < 500)
-				y = 0;
 
-			MotorCode(x, y, gear);   //Run MotorCode
+		} else {
+			trash = trash + 1 - 1;   //Random values
 		}
+		x = x - 8000;
+		y = y - 8000;
 
-		else {
-			trash = trash + 1 - 1;   //Bakchodi
-		}
+		if (abs(x) < 500)
+			x = 0;
+		if (abs(y) < 500)
+			y = 0;
+
+		MotorCode(x, y, gear);   //Run MotorCode
 
 	}
 
-} 							//LINK1   //LINK2
-//Data Packets: a s <16001> o <16000> t <16000> r <16001> p <16001> g <16001>
+}
+
